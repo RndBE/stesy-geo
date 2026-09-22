@@ -5,14 +5,23 @@ import {
   isCentreSettlement, dailySeries, meta, isStale, loadIncrements, consolidationParams, theoreticalFinal,
   type Instrument, type Zone, type SettlementAnalysis,
 } from './domain.js';
+import type { ConsolidationParams, LoadIncrement } from './analysis/consolidation.js';
 import { hansboMu, influenceDiameter, stagedSettlement } from './analysis/consolidation.js';
 import { hyperbolicAt } from './analysis/fitting.js';
 
 const dayKey = (t: number) => Math.floor((t + TZ_OFFSET) / DAY);
 const dayMid = (k: number) => k * DAY - TZ_OFFSET + DAY / 2;
 
+async function theoreticalProjectionInputs(z: Zone): Promise<{ incs: LoadIncrement[]; p: ConsolidationParams }> {
+  const stages = await getStages(z.id);
+  const layers = await getLayers(z.id);
+  const incs = loadIncrements(z, stages.map((s) => ({ ...s, actual_start: s.actual_start ?? s.planned_start, actual_end: s.actual_end ?? (s.actual_start ? null : s.planned_end) })), layers);
+  const p = await consolidationParams(z);
+  return { incs, p };
+}
+
 /** Proyeksi penurunan ke waktu t dari hasil analisis (Asaoka → hiperbolik → teoretis). */
-export function projectSettlement(a: SettlementAnalysis, lastT: number, t: number, z: Zone): { v: number; method: string } | null {
+export function projectSettlement(a: SettlementAnalysis, lastT: number, t: number, theoretical: { incs: LoadIncrement[]; p: ConsolidationParams } | null): { v: number; method: string } | null {
   if (a.current == null) return null;
   if (a.asaoka?.valid) {
     const n = (t - lastT) / (a.asaoka.dtDays * DAY);
@@ -20,18 +29,18 @@ export function projectSettlement(a: SettlementAnalysis, lastT: number, t: numbe
     return { v: sf - (sf - a.current) * Math.pow(a.asaoka.beta1, n), method: 'Asaoka' };
   }
   if (a.hyperbolic?.valid) return { v: hyperbolicAt(a.hyperbolic, t), method: 'hiperbolik' };
-  const stages = getStages(z.id);
-  const incs = loadIncrements(z, stages.map((s) => ({ ...s, actual_start: s.actual_start ?? s.planned_start, actual_end: s.actual_end ?? (s.actual_start ? null : s.planned_end) })), getLayers(z.id));
-  const p = consolidationParams(z);
+  if (!theoretical) return null;
+  const { incs, p } = theoretical;
   const scale = a.theory.atNow > 0 ? a.current / a.theory.atNow : 1;
   return { v: a.current + (stagedSettlement(t, incs, p) - stagedSettlement(lastT, incs, p)) * scale, method: 'teoretis (terskala)' };
 }
 
-export function buildTwin(projectId: number, horizonDays = 180) {
-  const db = getDb();
+export async function buildTwin(projectId: number, horizonDays = 180) {
+  const db = await getDb();
   const now = Date.now();
-  const zones = getZones(projectId);
-  const firstStart = Math.min(...zones.flatMap((z) => getStages(z.id).map((s) => s.actual_start ?? Infinity)));
+  const zones = await getZones(projectId);
+  const stagesByZone = new Map(await Promise.all(zones.map(async (z) => [z.id, await getStages(z.id)] as const)));
+  const firstStart = Math.min(...zones.flatMap((z) => stagesByZone.get(z.id)!.map((s) => s.actual_start ?? Infinity)));
   const k0 = dayKey(firstStart) - 7;
   const kNow = dayKey(now);
   const k1 = kNow + horizonDays;
@@ -39,33 +48,35 @@ export function buildTwin(projectId: number, horizonDays = 180) {
   for (let k = k0; k <= k1; k++) days.push(dayMid(k));
   const nowIndex = kNow - k0;
 
-  const zoneOut = zones.map((z) => {
-    const stages = getStages(z.id);
-    const st = zoneStatus(z, now);
+  const zoneOut = await Promise.all(zones.map(async (z) => {
+    const stages = stagesByZone.get(z.id)!;
+    const st = await zoneStatus(z, now);
+    const layers = await getLayers(z.id);
+    const pvd = await getPvd(z.id);
     return {
       id: z.id, code: z.code, name: z.name, sta_start: z.sta_start, sta_end: z.sta_end, is_transition: z.is_transition,
       ground_elev: z.ground_elev, crest_width: z.crest_width, slope_h: z.slope_h,
       design_fill_height: z.design_fill_height, surcharge_height: z.surcharge_height,
       decision: st.decision, U: st.U, phase: st.phase,
       fill: days.map((t, i) => +(i <= nowIndex ? fillHeightAt(stages, t) : fillHeightAt(stages.map((s) => ({ ...s, actual_start: s.actual_start ?? s.planned_start, actual_end: s.actual_end ?? s.planned_end })), t)).toFixed(3)),
-      layers: getLayers(z.id).map((l) => ({ name: l.name, top: l.top_depth, bottom: l.bottom_depth, cu: l.cu })),
-      pvd: getPvd(z.id),
+      layers: layers.map((l) => ({ name: l.name, top: l.top_depth, bottom: l.bottom_depth, cu: l.cu })),
+      pvd,
     };
-  });
+  }));
 
-  const insts = db.prepare('SELECT * FROM instrument WHERE project_id = ? ORDER BY sta, code').all(projectId) as Instrument[];
-  const openAlarm = db.prepare(
+  const insts = await db.prepare('SELECT * FROM instrument WHERE project_id = ? ORDER BY sta, code').all(projectId) as Instrument[];
+  const openAlarmStmt = db.prepare(
     `SELECT level FROM alarm_event WHERE instrument_id = ? AND cleared_at IS NULL ORDER BY CASE level WHEN 'Bahaya' THEN 3 WHEN 'Siaga' THEN 2 ELSE 1 END DESC LIMIT 1`,
   );
-  const health = db.prepare(
+  const healthStmt = db.prepare(
     `SELECT l.code, l.last_seen, h.battery_pct, h.rssi FROM logger_channel c JOIN logger l ON l.id = c.logger_id
      LEFT JOIN device_health h ON h.device_type = 'logger' AND h.device_id = l.id AND h.ts = (SELECT MAX(ts) FROM device_health WHERE device_type='logger' AND device_id = l.id)
      WHERE c.instrument_id = ? AND c.valid_to IS NULL`,
   );
   const zoneById = new Map(zones.map((z) => [z.id, z]));
 
-  const instOut = insts.map((i) => {
-    const series = dailySeries(i.id);
+  const instOut = await Promise.all(insts.map(async (i) => {
+    const series = await dailySeries(i.id);
     const vals: (number | null)[] = days.map(() => null);
     for (const p of series) {
       const idx = dayKey(p.t) - k0;
@@ -78,16 +89,17 @@ export function buildTwin(projectId: number, horizonDays = 180) {
     let projMethod: string | null = null;
     const z = i.zone_id ? zoneById.get(i.zone_id) : undefined;
     if (z && ['SC', 'GN', 'SP', 'SAA'].includes(i.type) && series.length) {
-      const a = analyzeSettlement(i, { at: now });
+      const a = await analyzeSettlement(i, { at: now });
       const lastT = series[series.length - 1].t;
+      const theoretical = (!a.asaoka?.valid && !a.hyperbolic?.valid) ? await theoreticalProjectionInputs(z) : null;
       for (let k = nowIndex + 1; k < days.length; k++) {
-        const pr = projectSettlement(a, lastT, days[k], z);
+        const pr = projectSettlement(a, lastT, days[k], theoretical);
         if (pr) { vals[k] = +pr.v.toFixed(1); projMethod = pr.method; }
       }
     } else if (z && i.type === 'PZ' && series.length) {
       const uh = m.u_hydro ?? 0;
       const ex = series[series.length - 1].v - uh;
-      const pvd = getPvd(z.id);
+      const pvd = await getPvd(z.id);
       const De = pvd ? influenceDiameter(pvd) : 1;
       const mu = pvd ? hansboMu(pvd) : 1;
       for (let k = nowIndex + 1; k < days.length; k++) {
@@ -96,15 +108,17 @@ export function buildTwin(projectId: number, horizonDays = 180) {
       }
       projMethod = 'Hansbo (c_h zona)';
     }
-    const h = health.get(i.id) as any;
+    const h = await healthStmt.get(i.id) as any;
+    const stale = i.mode === 'telemetry' ? await isStale(i, now) : false;
+    const alarm = ((await openAlarmStmt.get(i.id)) as any)?.level ?? null;
     return {
       id: i.id, code: i.code, type: i.type, zone_id: i.zone_id, sta: i.sta, offset: i.offset, tip_depth: i.tip_depth,
       unit: i.unit, mode: i.mode, u_hydro: m.u_hydro ?? null, centre: isCentreSettlement(i),
-      alarm: (openAlarm.get(i.id) as any)?.level ?? null, stale: i.mode === 'telemetry' ? isStale(i, now) : false,
+      alarm, stale,
       health: h ? { logger: h.code, battery: h.battery_pct, rssi: h.rssi, last_seen: h.last_seen } : null,
       values: vals, projection: projMethod,
     };
-  });
+  }));
 
   return { now, days, nowIndex, zones: zoneOut, instruments: instOut };
 }
@@ -127,27 +141,30 @@ function interpBySta(points: { sta: number; v: number }[], sta: number): number 
 
 export const OPRIT_SLOPE_LIMIT = 0.004; // perubahan kemiringan memanjang maks (ilustratif, 0,4%)
 
-export function longitudinal(projectId: number) {
-  const db = getDb();
-  const zones = getZones(projectId);
-  const al = db.prepare('SELECT * FROM alignment WHERE project_id = ?').get(projectId) as any;
+export async function longitudinal(projectId: number) {
+  const db = await getDb();
+  const zones = await getZones(projectId);
+  const al = await db.prepare('SELECT * FROM alignment WHERE project_id = ?').get(projectId) as any;
   const design: { sta: number; elev: number }[] = al ? JSON.parse(al.design_profile) : [];
   const now = Date.now();
-  const statusByZone = new Map(zones.map((z) => [z.id, zoneStatus(z, now)]));
+  const statuses = await Promise.all(zones.map((z) => zoneStatus(z, now)));
+  const statusByZone = new Map(zones.map((z, idx) => [z.id, statuses[idx]]));
+  const stagesByZone = new Map(await Promise.all(zones.map(async (z) => [z.id, await getStages(z.id)] as const)));
 
   const measured: { sta: number; v: number }[] = [];
   const final: { sta: number; v: number }[] = [];
   const finalDesign: { sta: number; v: number }[] = [];
   const points: { code: string; sta: number; S: number; Sf: number | null; method: string }[] = [];
   for (const z of zones) {
-    const stages = getStages(z.id);
-    const layers = getLayers(z.id);
+    const stages = stagesByZone.get(z.id)!;
+    const layers = await getLayers(z.id);
     const total = stages.reduce((s, x) => s + x.thickness, 0);
     const ratio = theoreticalFinal(layers, z.design_fill_height) / Math.max(1e-9, theoreticalFinal(layers, total));
     // gunakan rata-rata instrumen as per STA
     const bySta = new Map<number, SettlementAnalysis[]>();
-    for (const i of zoneInstruments(z.id).filter(isCentreSettlement)) {
-      const a = analyzeSettlement(i, { at: now });
+    const centreInsts = (await zoneInstruments(z.id)).filter(isCentreSettlement);
+    for (const i of centreInsts) {
+      const a = await analyzeSettlement(i, { at: now });
       if (a.current == null) continue;
       bySta.set(i.sta!, [...(bySta.get(i.sta!) ?? []), a]);
     }
@@ -169,7 +186,7 @@ export function longitudinal(projectId: number) {
   }[] = [];
   for (let sta = zones[0].sta_start; sta <= zones[zones.length - 1].sta_end; sta += 25) {
     const z = zones.find((x) => sta >= x.sta_start && sta < x.sta_end) ?? zones[zones.length - 1];
-    const stages = getStages(z.id);
+    const stages = stagesByZone.get(z.id)!;
     const H = fillHeightAt(stages, now);
     const S = interpBySta(measured, sta) ?? 0;
     const Sf = interpBySta(final, sta);

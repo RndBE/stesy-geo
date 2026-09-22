@@ -55,17 +55,17 @@ function chart(series: { name: string; color: string; data: [number, number][]; 
   return `<svg viewBox="0 0 ${w} ${h + 12}" class="chart">${grid.join('')}${months.join('')}<text x="8" y="${Tp + 4}" transform="rotate(-90 8 ${Tp + 4})" text-anchor="end">mm</text>${fillPath}${lines}<text x="${w - R + 4}" y="${h - B}" fill="#8A6D3B">H (m) maks ${hMax / 1.3 > 0 ? (hMax / 1.3).toFixed(1) : ''}</text><g transform="translate(0,12)">${legend}</g></svg>`;
 }
 
-export function weeklyReport(projectId: number, from: number, to: number, lang: 'id' | 'en', user: User): string {
+export async function weeklyReport(projectId: number, from: number, to: number, lang: 'id' | 'en', user: User): Promise<string> {
   const t = T[lang];
-  const db = getDb();
-  const project = db.prepare('SELECT * FROM project WHERE id = ?').get(projectId) as any;
-  const zones = getZones(projectId);
-  const statuses = zones.map((z) => zoneStatus(z, to));
-  const alarms = db.prepare(
+  const db = await getDb();
+  const project = await db.prepare('SELECT * FROM project WHERE id = ?').get(projectId) as any;
+  const zones = await getZones(projectId);
+  const statuses = await Promise.all(zones.map((z) => zoneStatus(z, to)));
+  const alarms = await db.prepare(
     `SELECT e.*, i.code ic, z.code zc, u.name un FROM alarm_event e LEFT JOIN instrument i ON i.id = e.instrument_id LEFT JOIN zone z ON z.id = e.zone_id LEFT JOIN app_user u ON u.id = e.ack_by
      WHERE e.ts BETWEEN ? AND ? ORDER BY e.ts`,
   ).all(from, to) as any[];
-  const lp = longitudinal(projectId);
+  const lp = await longitudinal(projectId);
   const colors = ['#1F6F8B', '#6C7A1E', '#B4541A', '#7A3E8E'];
 
   const summaryRows = statuses.map((s) => `<tr><td class="mono">${esc(s.zone.code)}</td><td>${esc(s.zone.name)}</td><td>${esc(s.phase)}${s.currentStage ? ` · tahap ${s.currentStage}` : ''}</td>
@@ -76,15 +76,16 @@ export function weeklyReport(projectId: number, from: number, to: number, lang: 
 
   const predRows = statuses.flatMap((s) => s.settlement.map((a) => `<tr><td class="mono">${esc(s.zone.code)}</td><td class="mono">${esc(a.code)}</td><td class="num">${n0(a.current)}</td><td class="num">${n0(a.final_asaoka)}</td><td class="num">${n0(a.final_hyper)}</td><td class="num">${n0(a.theory.final)}</td><td class="num">${pct(a.U_asaoka)}</td><td class="num">${a.diffPct != null ? a.diffPct.toFixed(1) + '%' : '—'}</td><td class="num">${a.rate7d != null ? a.rate7d.toFixed(1) : '—'}</td><td>${a.dateU90 ? fmtDate(a.dateU90, lang) : '—'}</td></tr>`)).join('');
 
-  const graphs = zones.map((z) => {
-    const centre = zoneInstruments(z.id).filter((i) => ['SC', 'GN', 'SP'].includes(i.type) && Math.abs(i.offset ?? 99) <= 6).slice(0, 4);
-    const stages = getStages(z.id);
+  const graphs = (await Promise.all(zones.map(async (z) => {
+    const centre = (await zoneInstruments(z.id)).filter((i) => ['SC', 'GN', 'SP'].includes(i.type) && Math.abs(i.offset ?? 99) <= 6).slice(0, 4);
+    const stages = await getStages(z.id);
     const first = Math.min(...stages.map((s) => s.actual_start ?? Infinity)) - 7 * DAY;
     const fill: [number, number][] = [];
     for (let tt = first; tt <= to; tt += 2 * DAY) fill.push([tt, fillHeightAt(stages, tt)]);
-    const ser = centre.map((i, j) => ({ name: i.code, color: colors[j % colors.length], data: dailySeries(i.id, first, to).filter((_, n) => n % 2 === 0).map((p) => [p.t, p.v] as [number, number]) }));
+    const centreSeries = await Promise.all(centre.map((i) => dailySeries(i.id, first, to)));
+    const ser = centre.map((i, j) => ({ name: i.code, color: colors[j % colors.length], data: centreSeries[j].filter((_, n) => n % 2 === 0).map((p) => [p.t, p.v] as [number, number]) }));
     return `<div class="card"><div class="cap"><span class="mono b">${esc(z.code)}</span> ${esc(z.name)}</div>${chart(ser, fill)}</div>`;
-  }).join('');
+  }))).join('');
 
   const pzRows = statuses.flatMap((s) => s.piezo.map((p) => `<tr><td class="mono">${esc(s.zone.code)}</td><td class="mono">${esc(p.code)}</td><td class="num">${p.depth ?? '—'} m</td><td class="num">${p.excessNow != null ? p.excessNow.toFixed(1) : '—'} kPa</td><td class="num">${pct(p.U)}</td><td class="num">${pct(p.stageDissipation)}</td></tr>`)).join('');
 

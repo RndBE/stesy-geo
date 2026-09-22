@@ -43,25 +43,25 @@ export interface Instrument {
 
 export const meta = (i: Instrument): Record<string, any> => (i.meta ? JSON.parse(i.meta) : {});
 
-export function getZone(id: number): Zone {
-  return getDb().prepare('SELECT * FROM zone WHERE id = ?').get(id) as Zone;
+export async function getZone(id: number): Promise<Zone> {
+  return (await getDb()).prepare('SELECT * FROM zone WHERE id = ?').get(id) as Promise<Zone>;
 }
-export function getZones(projectId: number): Zone[] {
-  return getDb().prepare('SELECT * FROM zone WHERE project_id = ? ORDER BY sta_start').all(projectId) as Zone[];
+export async function getZones(projectId: number): Promise<Zone[]> {
+  return (await getDb()).prepare('SELECT * FROM zone WHERE project_id = ? ORDER BY sta_start').all(projectId) as Promise<Zone[]>;
 }
-export function getStages(zoneId: number): FillStage[] {
-  return getDb().prepare('SELECT * FROM fill_stage WHERE zone_id = ? ORDER BY stage_no').all(zoneId) as FillStage[];
+export async function getStages(zoneId: number): Promise<FillStage[]> {
+  return (await getDb()).prepare('SELECT * FROM fill_stage WHERE zone_id = ? ORDER BY stage_no').all(zoneId) as Promise<FillStage[]>;
 }
-export function getLayers(zoneId: number): SoilLayer[] {
-  return getDb().prepare('SELECT * FROM soil_layer WHERE zone_id = ? ORDER BY top_depth').all(zoneId) as SoilLayer[];
+export async function getLayers(zoneId: number): Promise<SoilLayer[]> {
+  return (await getDb()).prepare('SELECT * FROM soil_layer WHERE zone_id = ? ORDER BY top_depth').all(zoneId) as Promise<SoilLayer[]>;
 }
-export function getPvd(zoneId: number): PvdGeometry & { length: number } | null {
-  const r = getDb().prepare('SELECT * FROM pvd_spec WHERE zone_id = ?').get(zoneId) as any;
+export async function getPvd(zoneId: number): Promise<(PvdGeometry & { length: number }) | null> {
+  const r = await (await getDb()).prepare('SELECT * FROM pvd_spec WHERE zone_id = ?').get(zoneId) as any;
   if (!r) return null;
   return { pattern: r.pattern, spacing: r.spacing, a: r.a, b: r.b, s: r.s, khKs: r.kh_ks, length: r.length };
 }
-export function getInstrument(id: number): Instrument {
-  return getDb().prepare('SELECT * FROM instrument WHERE id = ?').get(id) as Instrument;
+export async function getInstrument(id: number): Promise<Instrument> {
+  return (await getDb()).prepare('SELECT * FROM instrument WHERE id = ?').get(id) as Promise<Instrument>;
 }
 
 /** Tinggi timbunan aktual (m) pada waktu t; tahap diasumsikan naik linear selama periode pelaksanaan. */
@@ -79,8 +79,8 @@ export function fillHeightAt(stages: FillStage[], t: number, planned = false): n
   return h;
 }
 
-export function consolidationParams(z: Zone): ConsolidationParams {
-  const pvd = getPvd(z.id);
+export async function consolidationParams(z: Zone): Promise<ConsolidationParams> {
+  const pvd = await getPvd(z.id);
   return { cv: z.cv, ch: z.ch, Hdr: z.hdr, pvd };
 }
 
@@ -131,29 +131,29 @@ export function loadIncrements(z: Zone, stages: FillStage[], layers: SoilLayer[]
 
 // ---------------------------------------------------------------- data seri
 
-export function rawSeries(instId: number, from?: number, to?: number, includeFlagged = false): Point[] {
-  const rows = getDb().prepare(
+export async function rawSeries(instId: number, from?: number, to?: number, includeFlagged = false): Promise<Point[]> {
+  const rows = await (await getDb()).prepare(
     `SELECT ts AS t, value AS v FROM reading WHERE instrument_id = ? AND ts >= ? AND ts <= ?
      ${includeFlagged ? '' : "AND (flag IS NULL OR flag NOT IN ('ditolak'))"} ORDER BY ts`,
   ).all(instId, from ?? 0, to ?? 8.64e15) as Point[];
   return rows;
 }
 
-export function dailySeries(instId: number, from?: number, to?: number): Point[] {
-  const rows = getDb().prepare(
-    `SELECT CAST((ts + ${TZ_OFFSET}) / ${DAY} AS INTEGER) AS d, AVG(value) AS v, MAX(ts) AS last
+export async function dailySeries(instId: number, from?: number, to?: number): Promise<Point[]> {
+  const rows = await (await getDb()).prepare(
+    `SELECT CAST((ts + ${TZ_OFFSET}) / ${DAY} AS SIGNED) AS d, AVG(value) AS v, MAX(ts) AS last
      FROM reading WHERE instrument_id = ? AND ts >= ? AND ts <= ? AND (flag IS NULL OR flag NOT IN ('ditolak'))
      GROUP BY d ORDER BY d`,
   ).all(instId, from ?? 0, to ?? 8.64e15) as { d: number; v: number }[];
   return rows.map((r) => ({ t: r.d * DAY - TZ_OFFSET + DAY / 2, v: r.v }));
 }
 
-export function lastReading(instId: number): { ts: number; value: number; source: string; flag: string | null } | undefined {
-  return getDb().prepare('SELECT ts, value, source, flag FROM reading WHERE instrument_id = ? ORDER BY ts DESC LIMIT 1').get(instId) as any;
+export async function lastReading(instId: number): Promise<{ ts: number; value: number; source: string; flag: string | null } | undefined> {
+  return (await getDb()).prepare('SELECT ts, value, source, flag FROM reading WHERE instrument_id = ? ORDER BY ts DESC LIMIT 1').get(instId) as any;
 }
 
-export function valueAt(instId: number, t: number): number | null {
-  const r = getDb().prepare('SELECT value FROM reading WHERE instrument_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1').get(instId, t) as any;
+export async function valueAt(instId: number, t: number): Promise<number | null> {
+  const r = await (await getDb()).prepare('SELECT value FROM reading WHERE instrument_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1').get(instId, t) as any;
   return r ? r.value : null;
 }
 
@@ -186,12 +186,12 @@ export function constantLoadStart(stages: FillStage[], at: number): number | nul
   return Math.max(...done.map((s) => s.actual_end!));
 }
 
-export function analyzeSettlement(inst: Instrument, opts: { dtDays?: number; from?: number; to?: number; at?: number } = {}): SettlementAnalysis {
-  const z = getZone(inst.zone_id!);
-  const stages = getStages(z.id);
-  const layers = getLayers(z.id);
+export async function analyzeSettlement(inst: Instrument, opts: { dtDays?: number; from?: number; to?: number; at?: number } = {}): Promise<SettlementAnalysis> {
+  const z = await getZone(inst.zone_id!);
+  const stages = await getStages(z.id);
+  const layers = await getLayers(z.id);
   const at = opts.at ?? Date.now();
-  const series = dailySeries(inst.id, undefined, at);
+  const series = await dailySeries(inst.id, undefined, at);
   const t0 = constantLoadStart(stages, at);
   const current = series.length ? series[series.length - 1].v : null;
   const factor = offsetFactor(inst.offset ?? 0, z);
@@ -204,7 +204,7 @@ export function analyzeSettlement(inst: Instrument, opts: { dtDays?: number; fro
     hy = hyperbolic(series, opts.from ?? t0!, opts.to);
   }
 
-  const p = consolidationParams(z);
+  const p = await consolidationParams(z);
   const incs = loadIncrements(z, stages, layers, false, factor);
   const thFinal = incs.reduce((s, i) => s + i.finalSettlement, 0);
   const thNow = stagedSettlement(at, incs, p);
@@ -262,9 +262,9 @@ export function offsetFactor(offset: number, z: Pick<Zone, 'crest_width' | 'slop
 
 // ---------------------------------------------------------------- piezometer
 
-export function excessSeries(inst: Instrument, from?: number, to?: number, daily = false): Point[] {
+export async function excessSeries(inst: Instrument, from?: number, to?: number, daily = false): Promise<Point[]> {
   const uh = meta(inst).u_hydro ?? 0;
-  const s = daily ? dailySeries(inst.id, from, to) : rawSeries(inst.id, from, to);
+  const s = daily ? await dailySeries(inst.id, from, to) : await rawSeries(inst.id, from, to);
   return s.map((p) => ({ t: p.t, v: p.v - uh }));
 }
 
@@ -273,10 +273,10 @@ export interface PiezoAnalysis {
   U: number | null; stageDissipation: number | null; stageNo: number | null; duDsigma: number | null;
 }
 
-export function analyzePiezo(inst: Instrument, at = Date.now()): PiezoAnalysis {
-  const z = getZone(inst.zone_id!);
-  const stages = getStages(z.id);
-  const lr = getDb().prepare('SELECT value FROM reading WHERE instrument_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1').get(inst.id, at) as any;
+export async function analyzePiezo(inst: Instrument, at = Date.now()): Promise<PiezoAnalysis> {
+  const z = await getZone(inst.zone_id!);
+  const stages = await getStages(z.id);
+  const lr = await (await getDb()).prepare('SELECT value FROM reading WHERE instrument_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1').get(inst.id, at) as any;
   const uh = meta(inst).u_hydro ?? 0;
   const excessNow = lr ? lr.value - uh : null;
   const H = fillHeightAt(stages, at);
@@ -287,9 +287,9 @@ export function analyzePiezo(inst: Instrument, at = Date.now()): PiezoAnalysis {
   let stageDiss: number | null = null;
   let duDs: number | null = null;
   if (last && excessNow != null) {
-    const before = valueAt(inst.id, last.actual_start!);
+    const before = await valueAt(inst.id, last.actual_start!);
     const endT = (last.actual_end ?? at) + 3 * DAY;
-    const pk = getDb().prepare('SELECT MAX(value) m FROM reading WHERE instrument_id = ? AND ts BETWEEN ? AND ?').get(inst.id, last.actual_start, Math.min(endT, at)) as any;
+    const pk = await (await getDb()).prepare('SELECT MAX(value) m FROM reading WHERE instrument_id = ? AND ts BETWEEN ? AND ?').get(inst.id, last.actual_start, Math.min(endT, at)) as any;
     if (before != null && pk?.m != null) {
       const rise = pk.m - before;
       if (rise > 0.5) stageDiss = Math.min(1, Math.max(0, (pk.m - uh - excessNow) / rise));
@@ -344,29 +344,29 @@ export function isCentreSettlement(i: Instrument): boolean {
   return ['SC', 'GN'].includes(i.type) && Math.abs(i.offset ?? 99) <= 6 && i.status === 'aktif';
 }
 
-export function zoneInstruments(zoneId: number): Instrument[] {
-  return getDb().prepare('SELECT * FROM instrument WHERE zone_id = ? ORDER BY code').all(zoneId) as Instrument[];
+export async function zoneInstruments(zoneId: number): Promise<Instrument[]> {
+  return (await getDb()).prepare('SELECT * FROM instrument WHERE zone_id = ? ORDER BY code').all(zoneId) as Promise<Instrument[]>;
 }
 
-export function isStale(inst: Instrument, now = Date.now()): boolean {
-  const lr = lastReading(inst.id);
+export async function isStale(inst: Instrument, now = Date.now()): Promise<boolean> {
+  const lr = await lastReading(inst.id);
   if (!lr) return true;
   const allowed = inst.mode === 'manual' ? inst.expected_interval_min * 60e3 * 1.5 : Math.max(inst.expected_interval_min * 60e3 * 3, 6 * 3600e3);
   return now - lr.ts > allowed;
 }
 
-export function thresholdFor(zoneId: number, parameter: string, level: string): number | null {
-  const r = getDb().prepare(
+export async function thresholdFor(zoneId: number, parameter: string, level: string): Promise<number | null> {
+  const r = await (await getDb()).prepare(
     `SELECT threshold FROM alarm_rule WHERE parameter = ? AND level = ? AND enabled = 1 AND (zone_id = ? OR zone_id IS NULL)
      ORDER BY zone_id IS NULL LIMIT 1`,
   ).get(parameter, level, zoneId) as any;
   return r ? r.threshold : null;
 }
 
-export function zoneStatus(z: Zone, now = Date.now()): ZoneStatus {
-  const db = getDb();
-  const stages = getStages(z.id);
-  const insts = zoneInstruments(z.id);
+export async function zoneStatus(z: Zone, now = Date.now()): Promise<ZoneStatus> {
+  const db = await getDb();
+  const stages = await getStages(z.id);
+  const insts = await zoneInstruments(z.id);
   const H = fillHeightAt(stages, now);
   const totalPlanned = stages.reduce((s, x) => s + x.thickness, 0);
   const running = stages.find((s) => s.actual_start != null && s.actual_start <= now && (s.actual_end == null || s.actual_end > now));
@@ -378,28 +378,30 @@ export function zoneStatus(z: Zone, now = Date.now()): ZoneStatus {
 
   // Instrumen penurunan di as jalan (offset ≈ 0) menjadi acuan zona.
   const centre = insts.filter((i) => isCentreSettlement(i));
-  const settle = centre.map((i) => analyzeSettlement(i, { at: now }));
+  const settle = await Promise.all(centre.map((i) => analyzeSettlement(i, { at: now })));
   const piezos = insts.filter((i) => i.type === 'PZ' && i.status === 'aktif');
-  const pzA = piezos.map((i) => analyzePiezo(i, now));
+  const pzA = await Promise.all(piezos.map((i) => analyzePiezo(i, now)));
   const pzCentre = pzA.filter((p) => {
     const i = piezos.find((x) => x.id === p.instrumentId)!;
     return Math.abs(i.offset ?? 0) < 1;
   });
 
   const incs = insts.filter((i) => i.type === 'INC' && i.status === 'aktif');
-  const latRates = incs.map((i) => rate(rawSeries(i.id, now - 2 * DAY, now), DAY, now)).filter(Number.isFinite);
+  const latSeries = await Promise.all(incs.map((i) => rawSeries(i.id, now - 2 * DAY, now)));
+  const latRates = latSeries.map((s) => rate(s, DAY, now)).filter(Number.isFinite);
   const lateralRate = latRates.length ? Math.max(...latRates) : null;
-  const latMax = incs.map((i) => lastReading(i.id)?.value ?? null).filter((x): x is number => x != null);
+  const latMaxReadings = await Promise.all(incs.map((i) => lastReading(i.id)));
+  const latMax = latMaxReadings.map((r) => r?.value ?? null).filter((x): x is number => x != null);
   const Sc = avg(settle.map((s) => s.current));
   const deltaOverS = latMax.length && Sc && Sc > 50 ? Math.max(...latMax) / Sc : null;
 
-  const open = db.prepare(
+  const open = await db.prepare(
     `SELECT level, COUNT(*) n FROM alarm_event WHERE zone_id = ? AND cleared_at IS NULL AND category = 'geoteknik' GROUP BY level`,
   ).all(z.id) as { level: string; n: number }[];
-  const unacked = db.prepare(
+  const unacked = await db.prepare(
     `SELECT COUNT(*) n FROM alarm_event WHERE zone_id = ? AND ack_at IS NULL AND category = 'geoteknik' AND (cleared_at IS NULL OR cleared_at > ?)`,
   ).get(z.id, now - 7 * DAY) as { n: number };
-  const unackedSerious = db.prepare(
+  const unackedSerious = await db.prepare(
     `SELECT COUNT(*) n FROM alarm_event WHERE zone_id = ? AND ack_at IS NULL AND cleared_at IS NULL AND category = 'geoteknik' AND level IN ('Siaga','Bahaya')`,
   ).get(z.id) as { n: number };
 
@@ -413,8 +415,8 @@ export function zoneStatus(z: Zone, now = Date.now()): ZoneStatus {
   const criteria: Criterion[] = [];
   let decision: Decision;
   const pct = (x: number | null) => (x == null ? '—' : `${(x * 100).toFixed(0)}%`);
-  const waspadaLat = thresholdFor(z.id, 'lateral_rate', 'Waspada') ?? 5;
-  const dsLimit = thresholdFor(z.id, 'delta_over_s', 'Waspada') ?? 0.3;
+  const waspadaLat = (await thresholdFor(z.id, 'lateral_rate', 'Waspada')) ?? 5;
+  const dsLimit = (await thresholdFor(z.id, 'delta_over_s', 'Waspada')) ?? 0.3;
 
   if (phase === 'penimbunan' || (phase === 'masa tunggu' && !surchargeOn)) {
     const diss = pzCentre.map((p) => p.stageDissipation).filter((x): x is number => x != null);
@@ -431,7 +433,8 @@ export function zoneStatus(z: Zone, now = Date.now()): ZoneStatus {
       const daily: number[] = [];
       for (let d = 0; d < 3; d++) {
         const end = now - d * DAY;
-        const r = incs.map((i) => rate(rawSeries(i.id, end - 2 * DAY, end), DAY, end)).filter(Number.isFinite);
+        const series = await Promise.all(incs.map((i) => rawSeries(i.id, end - 2 * DAY, end)));
+        const r = series.map((s) => rate(s, DAY, end)).filter(Number.isFinite);
         daily.push(r.length ? Math.max(...r) : NaN);
       }
       latOk = daily.every((r) => Number.isFinite(r) && r < waspadaLat);
@@ -471,7 +474,8 @@ export function zoneStatus(z: Zone, now = Date.now()): ZoneStatus {
   }
   if (unackedSerious.n > 0) decision = 'Perlu tinjauan';
 
-  const stale = insts.filter((i) => i.status === 'aktif' && isStale(i, now)).length;
+  const staleFlags = await Promise.all(insts.filter((i) => i.status === 'aktif').map((i) => isStale(i, now)));
+  const stale = staleFlags.filter(Boolean).length;
 
   return {
     zone: z, fillHeight: H, totalPlanned, phase, currentStage,

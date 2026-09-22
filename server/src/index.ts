@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import aedesFactory from 'aedes';
-import { getDb, DB_PATH } from './db.js';
+import { getDb } from './db.js';
 import { authenticate } from './auth.js';
 import { api } from './routes.js';
 import { authenticateGateway, ingestPayload } from './ingest.js';
@@ -16,12 +16,17 @@ import { broadcast } from './events.js';
 const PORT = Number(process.env.PORT ?? 8080);
 const MQTT_PORT = Number(process.env.MQTT_PORT ?? 1883);
 const here = path.dirname(fileURLToPath(import.meta.url));
+const dbDesc = `mysql://${process.env.STESYGEO_DB_USER ?? 'root'}@${process.env.STESYGEO_DB_HOST ?? '127.0.0.1'}:${process.env.STESYGEO_DB_PORT ?? 3306}/${process.env.STESYGEO_DB_NAME ?? 'stesygeo'}`;
 
-if (!fs.existsSync(DB_PATH)) {
-  console.error(`Basis data belum ada (${DB_PATH}). Jalankan: npm run seed`);
+try {
+  const db = await getDb();
+  const projects = await db.prepare('SELECT COUNT(*) n FROM project').get() as { n: number };
+  if (!projects.n) console.warn(`Basis data (${dbDesc}) masih kosong. Jalankan: npm run seed`);
+} catch (e: any) {
+  console.error(`Tidak bisa terhubung ke MySQL (${dbDesc}): ${e.message}`);
+  console.error('Set STESYGEO_DB_HOST/PORT/USER/PASSWORD/NAME sesuai server MySQL lokal.');
   process.exit(1);
 }
-getDb();
 
 const app = express();
 app.disable('x-powered-by');
@@ -51,7 +56,7 @@ if (fs.existsSync(webDist)) {
   app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(path.join(webDist, 'index.html')));
 }
 
-app.listen(PORT, () => console.log(`STESY GEO API di http://localhost:${PORT}  (DB: ${DB_PATH})`))
+app.listen(PORT, () => console.log(`STESY GEO API di http://localhost:${PORT}  (DB: ${dbDesc})`))
   .on('error', (e: NodeJS.ErrnoException) => {
     if (e.code === 'EADDRINUSE') console.error(`Port ${PORT} sudah dipakai (server STESY GEO lain masih berjalan?). Hentikan proses itu atau jalankan dengan PORT=8081 npm start.`);
     else console.error(e);
@@ -62,8 +67,8 @@ app.listen(PORT, () => console.log(`STESY GEO API di http://localhost:${PORT}  (
 // Topik: stesygeo/<kode-gateway>/up, username = kode gateway, password = token gateway.
 // Catatan: produksi memakai TLS (mqtts, port 8883) di depan broker.
 const broker = (aedesFactory as any)();
-broker.authenticate = (client: any, username: string, password: Buffer, cb: (e: Error | null, ok: boolean) => void) => {
-  const gw = authenticateGateway(username, password?.toString());
+broker.authenticate = async (client: any, username: string, password: Buffer, cb: (e: Error | null, ok: boolean) => void) => {
+  const gw = await authenticateGateway(username, password?.toString());
   if (gw) client.gateway = gw;
   cb(null, !!gw);
 };
@@ -71,10 +76,10 @@ broker.authorizePublish = (client: any, packet: any, cb: (e: Error | null) => vo
   if (client?.gateway && packet.topic === `stesygeo/${client.gateway.code}/up`) return cb(null);
   cb(new Error('Topik tidak diizinkan'));
 };
-broker.on('publish', (packet: any, client: any) => {
+broker.on('publish', async (packet: any, client: any) => {
   if (!client?.gateway || !packet.topic.endsWith('/up')) return;
   try {
-    const r = ingestPayload(JSON.parse(packet.payload.toString()), client.gateway.id);
+    const r = await ingestPayload(JSON.parse(packet.payload.toString()), client.gateway.id);
     if (r.rejected.length) console.warn(`MQTT ${client.gateway.code}: ${r.rejected.length} bacaan ditolak`, r.rejected.slice(0, 3));
   } catch (e) {
     console.error('MQTT payload tidak valid', e);
@@ -83,9 +88,9 @@ broker.on('publish', (packet: any, client: any) => {
 createServer(broker.handle).listen(MQTT_PORT, () => console.log(`Broker MQTT di mqtt://localhost:${MQTT_PORT}`));
 
 // ---------------------------------------------------------------- tugas berkala
-setInterval(() => {
+setInterval(async () => {
   try {
-    evaluateDevices();
+    await evaluateDevices();
     broadcast('tick', { at: Date.now() });
   } catch (e) { console.error(e); }
 }, 60e3);

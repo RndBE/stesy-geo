@@ -22,17 +22,17 @@ export function verifyPassword(pw: string, stored: string): boolean {
   return crypto.timingSafeEqual(hash, Buffer.from(hashHex, 'hex'));
 }
 
-export function login(email: string, password: string): { token: string; user: User } | null {
-  const db = getDb();
-  const u = db.prepare('SELECT * FROM app_user WHERE email = ?').get(email.trim().toLowerCase()) as any;
+export async function login(email: string, password: string): Promise<{ token: string; user: User } | null> {
+  const db = await getDb();
+  const u = await db.prepare('SELECT * FROM app_user WHERE email = ?').get(email.trim().toLowerCase()) as any;
   if (!u || !verifyPassword(password, u.password_hash)) return null;
   const token = crypto.randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO session(token, user_id, expires_at) VALUES (?,?,?)').run(token, u.id, Date.now() + 7 * 86400e3);
+  await db.prepare('INSERT INTO session(token, user_id, expires_at) VALUES (?,?,?)').run(token, u.id, Date.now() + 7 * 86400e3);
   return { token, user: { id: u.id, email: u.email, name: u.name, role: u.role } };
 }
 
-export function logout(token: string) {
-  getDb().prepare('DELETE FROM session WHERE token = ?').run(token);
+export async function logout(token: string) {
+  await (await getDb()).prepare('DELETE FROM session WHERE token = ?').run(token);
 }
 
 declare global {
@@ -49,10 +49,10 @@ function tokenOf(req: Request): string | null {
   return null;
 }
 
-export function authenticate(req: Request, _res: Response, next: NextFunction) {
+export async function authenticate(req: Request, _res: Response, next: NextFunction) {
   const t = tokenOf(req);
   if (t) {
-    const u = getDb().prepare(
+    const u = await (await getDb()).prepare(
       `SELECT u.id, u.email, u.name, u.role FROM session s JOIN app_user u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?`,
     ).get(t, Date.now()) as User | undefined;
     if (u) req.user = u;
@@ -69,7 +69,7 @@ export function requireRole(min: Role) {
 }
 
 /** Hak akses per proyek (F-USR-02). Admin melihat semua proyek. */
-export function canAccessProject(user: User, projectId: number): boolean {
+export async function canAccessProject(user: User, projectId: number): Promise<boolean> {
   if (user.role === 'admin') return true;
-  return !!getDb().prepare('SELECT 1 FROM project_member WHERE project_id = ? AND user_id = ?').get(projectId, user.id);
+  return !!(await (await getDb()).prepare('SELECT 1 FROM project_member WHERE project_id = ? AND user_id = ?').get(projectId, user.id));
 }

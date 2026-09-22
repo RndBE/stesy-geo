@@ -13,13 +13,12 @@
   },
   "dependencies": {
     "aedes": "^0.51.3",
-    "better-sqlite3": "^9.6.0",
     "cors": "^2.8.6",
     "express": "^4.22.3",
-    "mqtt": "5.10"
+    "mqtt": "5.10",
+    "mysql2": "^3.11.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^9.6.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.25",
     "@types/node": "^18.19.130",
