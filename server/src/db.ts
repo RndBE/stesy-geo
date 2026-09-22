@@ -1,5 +1,9 @@
 // Skema data inti — PRD Bagian 12. MySQL (via mysql2) dipakai untuk pengembangan lokal;
 // skema mengikuti PRD 12, siap dipindah ke PostgreSQL + PostGIS + TimescaleDB.
+//
+// Kolom `offset` wajib di-backtick: MariaDB menjadikannya kata terpesan sejak 10.6,
+// sementara MySQL 8 tidak — tanpa backtick, skema ini lolos di MySQL lalu gagal
+// dengan ER_PARSE_ERROR di MariaDB.
 import mysql from 'mysql2/promise';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -40,7 +44,7 @@ CREATE TABLE IF NOT EXISTS fill_stage (
 );
 CREATE TABLE IF NOT EXISTS instrument (
   id INT PRIMARY KEY AUTO_INCREMENT, project_id INTEGER NOT NULL, zone_id INTEGER REFERENCES zone(id),
-  code VARCHAR(64) NOT NULL UNIQUE, type TEXT NOT NULL, section_sta REAL, sta REAL, offset REAL,
+  code VARCHAR(64) NOT NULL UNIQUE, type TEXT NOT NULL, section_sta REAL, sta REAL, \`offset\` REAL,
   x REAL, y REAL, z REAL, tip_depth REAL, installed_at BIGINT, zero_reading REAL,
   unit TEXT NOT NULL, mode VARCHAR(32) NOT NULL DEFAULT 'telemetry', status VARCHAR(32) NOT NULL DEFAULT 'aktif',
   meta TEXT, expected_interval_min INTEGER NOT NULL DEFAULT 60
@@ -63,7 +67,7 @@ CREATE TABLE IF NOT EXISTS gateway (
 );
 CREATE TABLE IF NOT EXISTS logger (
   id INT PRIMARY KEY AUTO_INCREMENT, gateway_id INTEGER REFERENCES gateway(id), code VARCHAR(64) NOT NULL UNIQUE,
-  vendor TEXT, model TEXT, serial VARCHAR(128) NOT NULL UNIQUE, firmware TEXT, sta REAL, offset REAL,
+  vendor TEXT, model TEXT, serial VARCHAR(128) NOT NULL UNIQUE, firmware TEXT, sta REAL, \`offset\` REAL,
   channels INTEGER NOT NULL DEFAULT 8, last_seen BIGINT
 );
 CREATE TABLE IF NOT EXISTS logger_channel (

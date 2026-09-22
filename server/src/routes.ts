@@ -419,7 +419,7 @@ api.get('/routes', wrap(async (req, res) => {
   const pid = num(req.query.project, 1)!;
   if (!(await projectGuard(req, res, pid))) return;
   const d = await db();
-  const insts = await d.prepare(`SELECT i.*, z.code AS zone_code FROM instrument i LEFT JOIN zone z ON z.id = i.zone_id WHERE i.project_id = ? ORDER BY i.sta, i.offset`).all(pid) as any[];
+  const insts = await d.prepare(`SELECT i.*, z.code AS zone_code FROM instrument i LEFT JOIN zone z ON z.id = i.zone_id WHERE i.project_id = ? ORDER BY i.sta, i.\`offset\``).all(pid) as any[];
   const prev2 = d.prepare('SELECT ts, value, source FROM reading WHERE instrument_id = ? ORDER BY ts DESC LIMIT 3');
   const zones = await getZones(pid);
   const routes = [

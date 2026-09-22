@@ -134,7 +134,7 @@ async function main() {
   const loggerInstall: Record<string, number> = {};
   for (const l of loggers) {
     const lInfo = await db.prepare(
-      `INSERT INTO logger(gateway_id, code, vendor, model, serial, firmware, sta, offset, channels, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO logger(gateway_id, code, vendor, model, serial, firmware, sta, \`offset\`, channels, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?)`,
     ).run(gwId, l.code, l.vendor, l.model, l.serial, l.firmware, l.sta, l.offset, l.channels, null);
     loggerId[l.code] = Number(lInfo.lastInsertRowid);
   }
@@ -143,7 +143,7 @@ async function main() {
     const xy = staToXY(i.sta, i.offset);
     const zId = i.zone ? zoneId[i.zone] : null;
     const iInfo = await db.prepare(
-      `INSERT INTO instrument(project_id, zone_id, code, type, section_sta, sta, offset, x, y, z, tip_depth, installed_at, zero_reading, unit, mode, status, meta, expected_interval_min)
+      `INSERT INTO instrument(project_id, zone_id, code, type, section_sta, sta, \`offset\`, x, y, z, tip_depth, installed_at, zero_reading, unit, mode, status, meta, expected_interval_min)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(pid, zId, i.code, i.type, i.sectionSta, i.sta, i.offset, xy.x, xy.y, GROUND_ELEV, i.tipDepth, i.installedAt,
       i.type === 'PZ' ? i.meta.u_hydro : 0, i.unit, i.mode, 'aktif', JSON.stringify(i.meta), i.intervalMin);
