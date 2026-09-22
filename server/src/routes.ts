@@ -14,6 +14,7 @@ import { PARAMETERS, evaluateInstrument } from './alarms.js';
 import { ingestPayload, ingestManual, authenticateGateway } from './ingest.js';
 import { subscribe, broadcast } from './events.js';
 import { buildTwin, longitudinal } from './twin.js';
+import { probeState, setBaseline, clearBaseline } from './probe.js';
 import { weeklyReport } from './report.js';
 
 export const api = express.Router();
@@ -63,6 +64,13 @@ api.post('/ingest', wrap(async (req, res) => {
 api.get('/stream', requireRole('viewer'), (req, res) => subscribe(res));
 
 api.use(requireRole('viewer'));
+
+/** Keadaan probe inclinometer live untuk penampil 3D di digital twin. */
+api.get('/probe', (_req, res) => res.json(probeState()));
+
+/** Setel acuan nol: pergeseran selanjutnya dihitung dari keadaan probe saat ini. */
+api.post('/probe/baseline', requireRole('engineer'), wrap(async (_req, res) => res.json(await setBaseline())));
+api.delete('/probe/baseline', requireRole('engineer'), wrap(async (_req, res) => res.json(await clearBaseline())));
 
 api.post('/logout', wrap(async (req, res) => {
   await logout(req.headers.authorization?.slice(7) ?? '');

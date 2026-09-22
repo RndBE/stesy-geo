@@ -12,6 +12,7 @@ import { api } from './routes.js';
 import { authenticateGateway, ingestPayload } from './ingest.js';
 import { evaluateDevices } from './alarms.js';
 import { broadcast } from './events.js';
+import { startProbeBridge } from './probe.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const MQTT_PORT = Number(process.env.MQTT_PORT ?? 1883);
@@ -86,6 +87,11 @@ broker.on('publish', async (packet: any, client: any) => {
   }
 });
 createServer(broker.handle).listen(MQTT_PORT, () => console.log(`Broker MQTT di mqtt://localhost:${MQTT_PORT}`));
+
+// ---------------------------------------------------------------- probe inclinometer live
+// Alat vendor menerbitkan ke broker sendiri (topik Logger_<id>), bukan ke broker di atas.
+// Diam saja kalau STESYGEO_PROBE_MQTT_URL tidak diisi.
+startProbeBridge();
 
 // ---------------------------------------------------------------- tugas berkala
 setInterval(async () => {

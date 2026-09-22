@@ -10,7 +10,7 @@ Butuh Node.js ≥ 18.
 
 ```bash
 npm run setup      # install dependensi server & web
-npm run seed       # buat basis data contoh (server/data/stesygeo.db)
+npm run seed       # buat basis data contoh (MySQL, basis data stesygeo)
 npm run build      # build frontend ke web/dist
 npm start          # API + frontend di http://localhost:8080, broker MQTT di :1883
 ```
@@ -22,6 +22,62 @@ npm run simulate
 ```
 
 Opsi simulator: `--http` (kirim lewat HTTP push, bukan MQTT), `--every 30`, `--backfill 72`.
+
+Basis data diambil dari environment: `STESYGEO_DB_HOST` (127.0.0.1), `STESYGEO_DB_PORT` (3306),
+`STESYGEO_DB_USER` (root), `STESYGEO_DB_PASSWORD` (kosong), `STESYGEO_DB_NAME` (stesygeo).
+Skema dibuat otomatis saat pertama tersambung; `npm run seed` mengosongkan lalu mengisi ulang.
+
+### Probe inclinometer live
+
+Satu instrumen `INC` bisa disuapi probe inclinometer sungguhan yang menerbitkan ke broker MQTT-nya
+sendiri dengan topik `Logger_<id>` (payload `sensorN: {nama, nilai, satuan}`, nama `Step<n>_X`,
+`Step<n>_Y`, `Step<n>_T`, `Step<n>_AZ`). Bentuk probe muncul sebagai penampil 3D di layar Digital twin, dan satu
+bacaan profil defleksi disimpan berkala supaya grafik, analisis, dan alarm ikut hidup.
+
+```bash
+STESYGEO_PROBE_MQTT_URL=mqtt://192.168.1.10:1883 STESYGEO_PROBE_MQTT_USER=... STESYGEO_PROBE_MQTT_PASS=... npm start
+```
+
+| Variabel | Bawaan | Arti |
+|---|---|---|
+| `STESYGEO_PROBE_MQTT_URL` | — | broker alat. Kosong = fitur mati |
+| `STESYGEO_PROBE_MQTT_USER` / `_PASS` | — | kredensial broker |
+| `STESYGEO_PROBE_TOPIC` | `Logger_30083` | topik data; `/status` dan `/info` ikut dilanggan |
+| `STESYGEO_PROBE_INSTRUMENT` | `INC-01` | kode instrumen tujuan |
+| `STESYGEO_PROBE_GAUGE_MM` | `500` | jarak antar sumbu u-joint |
+| `STESYGEO_PROBE_PERSIST_MS` | `expected_interval_min` instrumen | jeda minimum antar bacaan tersimpan |
+| `STESYGEO_PROBE_RATE_WINDOW_MS` | `60000` | jendela perhitungan laju pergeseran |
+
+#### Perhitungan pergeseran
+
+Per segmen: `ΔA = gauge × sin A`, `ΔB = gauge × sin B` (sama dengan kolom `dA_mm`/`dB_mm` di CSV
+firmware), resultannya `hypot(ΔA, ΔB) = gauge × sin T`.
+
+Kumulatif dijumlahkan sebagai **vektor per bidang** — `cumA = ΣΔA`, `cumB = ΣΔB`, resultan
+`hypot(cumA, cumB)` — bukan menjumlahkan besaran resultan tiap segmen. Segmen yang miring ke arah
+berlawanan memang saling meniadakan; menjumlahkan besarannya melaporkan pergeseran yang tidak
+pernah terjadi (pada probe demo selisihnya sampai 26%).
+
+Jeda simpan mengikuti `expected_interval_min` instrumen tujuan kecuali diisi lewat env. Alat mengirim
+tiap detik dan penampil 3D memakai semuanya; yang masuk basis data hanya satu cuplikan per jeda itu.
+INC-01 disetel 1 menit. Ambang data basi tidak ikut terpengaruh: `isStale` memakai
+`max(interval × 3, 6 jam)`, jadi lantai 6 jamnya yang menang.
+
+Acuan nol disimpan di `instrument.meta.probe_baseline`, jadi bertahan saat server dimulai ulang.
+Selama ada acuan, deformasi = kumulatif − acuan, dan nilai itu pula yang masuk tabel `reading`.
+
+| Endpoint | Peran | Arti |
+|---|---|---|
+| `GET /api/probe` | viewer | keadaan probe saat ini |
+| `POST /api/probe/baseline` | engineer | setel acuan dari keadaan probe sekarang |
+| `DELETE /api/probe/baseline` | engineer | hapus acuan, kembali ke pergeseran mutlak |
+
+Laju pergeseran simpul teratas dihitung dari jendela bergulir (bawaan 60 detik) dan baru muncul
+setelah jendelanya terisi seperempat — di bawah itu pembaginya terlalu kecil dan angkanya meledak.
+
+Firmware lama tanpa slot `_T`/`_AZ` tetap jalan: keduanya dipulihkan dari sudut bidang. Firmware
+memakai `A = atan2(ax, hypot(ay, az))` sehingga `ux = sin A` dan `uy = sin B`, jadi
+`T = acos(sqrt(1 − sin²A − sin²B))` dan `azim = atan2(sin B, sin A)`.
 
 Untuk mode pengembangan dengan hot reload, jalankan `npm run dev:api` dan `npm run dev:web` (Vite di :5173, dengan proxy `/api` ke :8080).
 

@@ -89,7 +89,7 @@ let lastEventAt = 0;
 export function connectStream() {
   if (es || !session.token) return;
   es = new EventSource(`/api/stream?token=${session.token}`);
-  for (const ev of ['readings', 'alarms', 'zones', 'tick']) {
+  for (const ev of ['readings', 'alarms', 'zones', 'tick', 'probe']) {
     es.addEventListener(ev, (e) => {
       lastEventAt = Date.now();
       const d = JSON.parse((e as MessageEvent).data);
@@ -99,6 +99,17 @@ export function connectStream() {
   es.onerror = () => { es?.close(); es = null; setTimeout(connectStream, 5000); };
 }
 export const streamAge = () => lastEventAt;
+
+/** Muatan satu jenis event SSE, apa adanya tanpa debounce (mis. probe live). */
+export function useEvent<T>(event: string, cb: (data: T) => void) {
+  const cbRef = useRef(cb);
+  cbRef.current = cb;
+  useEffect(() => {
+    const l: Listener = (ev, d) => { if (ev === event) cbRef.current(d as T); };
+    listeners.add(l);
+    return () => { listeners.delete(l); };
+  }, [event]);
+}
 
 /** Debounced reload saat event tertentu. */
 export function useLive(events: string[], cb: () => void, delay = 1500) {

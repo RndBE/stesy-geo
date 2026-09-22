@@ -1,10 +1,11 @@
 // Layar 2 — Digital Twin (PRD 7, 9.6).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Play, Pause, Crosshair, Map as MapIcon, Scissors, RotateCcw, Info } from 'lucide-react';
+import { Play, Pause, Crosshair, Map as MapIcon, Scissors, RotateCcw, Info, Radio } from 'lucide-react';
 import { useApi } from '../api';
 import { TwinScene, RAMPS, type Mode, type TwinData, type TwinInst } from '../twin/scene';
 import { SectionView } from '../twin/SectionView';
+import { ProbeView, useProbe } from '../twin/ProbeView';
 import { MapView } from '../components/MapView';
 import { DECISION_META, Level, Loading, ErrorBox } from '../components/ui';
 import { sta as staFmt, num, date, offsetLabel, ago } from '../lib/format';
@@ -35,6 +36,8 @@ export default function Twin() {
   const [showMap, setShowMap] = useState(false);
   const [legend, setLegend] = useState<[number, number]>([0, 1]);
   const [focus, setFocus] = useState<{ x: number; y: number } | null>(null);
+  const { probe, setProbe } = useProbe();
+  const [showProbe, setShowProbe] = useState(false);
 
   useEffect(() => {
     if (!host.current || !data) return;
@@ -55,6 +58,12 @@ export default function Twin() {
     setLegend(s.legendRange());
   }, [mode, ti]);
   useEffect(() => { sceneRef.current?.setExaggeration(exag); }, [exag]);
+  useEffect(() => {
+    const s = sceneRef.current;
+    if (!s) return;
+    s.liveCode = probe?.enabled ? probe.instrument : null;
+    s.update();
+  }, [probe?.enabled, probe?.instrument, data]);
   useEffect(() => { sceneRef.current?.setSection(section); }, [section]);
 
   useEffect(() => {
@@ -85,6 +94,9 @@ export default function Twin() {
   const modeMeta = MODES.find((m) => m.value === mode)!;
   const strip = lp.data?.strip ?? [];
   const selV = sel ? sel.values[ti] : null;
+
+  const probeInst = probe?.enabled ? data.instruments.find((i) => i.code === probe.instrument) : undefined;
+  const probeSta = probeInst?.sta;
 
   const flyTo = (s: number) => {
     sceneRef.current?.flyToSta(s);
@@ -120,10 +132,16 @@ export default function Twin() {
           <div className="label" style={{ margin: '10px 0 4px' }}>Eksagerasi vertikal {exag}×</div>
           <input type="range" min={1} max={10} step={1} value={exag} onChange={(e) => setExag(Number(e.target.value))} style={{ width: '100%' }} />
           <div className="row tight" style={{ marginTop: 8 }}>
-            <button className={`btn sm ${section != null ? 'primary' : ''}`} onClick={() => setSection(section == null ? 24500 : null)}><Scissors size={13} />Irisan</button>
+            <button className={`btn sm ${section != null ? 'primary' : ''}`} onClick={() => { setShowProbe(false); setSection(section == null ? 24500 : null); }}><Scissors size={13} />Irisan</button>
             <button className={`btn sm ${showMap ? 'primary' : ''}`} onClick={() => setShowMap(!showMap)}><MapIcon size={13} />Peta 2D</button>
             <button className="btn sm" onClick={() => sceneRef.current?.resetView()} title="Reset kamera"><RotateCcw size={13} /></button>
           </div>
+          {probe?.enabled && (
+            <button className={`btn sm ${showProbe ? 'primary' : ''}`} style={{ width: '100%', marginTop: 6, justifyContent: 'flex-start' }}
+              onClick={() => { setSection(null); setShowProbe(!showProbe); if (!showProbe) flyTo(probeSta ?? 24200); }}>
+              <Radio size={13} />Probe live {probe.instrument}
+            </button>
+          )}
           <div className="muted" style={{ fontSize: 11, marginTop: 8, display: 'flex', gap: 5 }} title="Model perilaku memakai solusi analitis 1D (Terzaghi) + radial (Hansbo) per sel, bukan FEM 2D/3D. Nilai antarinstrumen diinterpolasi (IDW sepanjang STA × profil melintang model).">
             <Info size={13} style={{ flex: 'none', marginTop: 1 }} /><span>Metode model: analitis 1D + radial per sel grid ±5 m; bukan FEM.</span>
           </div>
@@ -173,7 +191,8 @@ export default function Twin() {
             <div className="row tight" style={{ marginTop: 8 }}>
               <Link className="btn sm" to={`/instrumen/${sel.id}`}>Data</Link>
               {['SC', 'GN', 'SP', 'SAA', 'PZ'].includes(sel.type) && <Link className="btn sm" to={`/analisis?i=${sel.id}`}>Analisis</Link>}
-              <button className="btn sm" onClick={() => { setSection(sel.sta); flyTo(sel.sta); }}><Crosshair size={13} />Irisan di sini</button>
+              <button className="btn sm" onClick={() => { setShowProbe(false); setSection(sel.sta); flyTo(sel.sta); }}><Crosshair size={13} />Irisan di sini</button>
+              {probe?.enabled && sel.code === probe.instrument && <button className="btn sm primary" onClick={() => { setSection(null); setShowProbe(true); }}><Radio size={13} />Probe 3D</button>}
             </div>
           </div>
         )}
@@ -183,6 +202,8 @@ export default function Twin() {
             {hover.i.code} · {hover.i.values[ti] != null ? `${num(hover.i.values[ti], hover.i.unit === 'kPa' ? 1 : 0)} ${hover.i.unit}` : '—'}
           </div>
         )}
+
+        {showProbe && probe && <ProbeView state={probe} setState={setProbe} instrumentId={probeInst?.id} onClose={() => setShowProbe(false)} />}
 
         {/* irisan penampang */}
         {section != null && (

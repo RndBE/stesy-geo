@@ -59,6 +59,8 @@ export class TwinScene {
   exag = 3;
   mode: Mode = 'penurunan';
   tIndex = 0;
+  /** Kode instrumen yang disuapi probe live: markernya diberi pendar tetap. */
+  liveCode: string | null = null;
   private xs: number[] = [];
   private zs: number[] = [];
   private base!: THREE.Mesh;
@@ -436,7 +438,7 @@ export class TwinScene {
       // proyeksi: marker dibuat lebih transparan (terukur vs prediksi dibedakan, PRD 7.1)
       mat.transparent = isProj;
       mat.opacity = isProj ? 0.45 : 1;
-      mat.emissive.set(m.userData.selected ? 0x663311 : 0x000000);
+      mat.emissive.set(m.userData.selected ? 0x663311 : i.code === this.liveCode ? 0x1f4a52 : 0x000000);
     }
   }
 
