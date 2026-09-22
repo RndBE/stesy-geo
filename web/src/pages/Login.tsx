@@ -28,7 +28,7 @@ export default function Login() {
   return (
     <div className="login mm-grid">
       <form className="box glass" onSubmit={submit}>
-        <h1>STESY GEO</h1>
+        <h1><img src="/logo_beacon.png" alt="Beacon Engineering" /></h1>
         <div className="muted" style={{ marginBottom: 16 }}>Sistem Monitoring Konsolidasi Tanah</div>
         <div className="grid" style={{ gap: 10 }}>
           <label className="field"><span>Email</span><input className="inp" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" /></label>

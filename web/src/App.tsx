@@ -41,9 +41,9 @@ function StatusStrip({ theme, toggle }: { theme: string; toggle: () => void }) {
   const fresh = data?.latestData ? now - data.latestData < 2 * 3600e3 : false;
   return (
     <header className="strip">
-      <span className="brand"><svg width="16" height="16" viewBox="0 0 32 32"><path d="M4 22h24M8 22l4-8h8l4 8" fill="none" stroke="currentColor" strokeWidth="2.6" /></svg>STESY GEO</span>
+      <span className="brand"><img src="/logo_beacon.png" alt="Beacon Engineering" /></span>
       <span className="sep" />
-      <span className="kv" title={data?.project?.name}><span className="mono b">{data?.project?.code ?? '…'}</span><span className="muted" style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis' }}>{data?.project?.name}</span></span>
+      <span className="kv" title={data?.project?.name}><span className="mono b">{data?.project?.code ?? '…'}</span><span className="muted ellip">{data?.project?.name}</span></span>
       <span className="sep" />
       <span className="kv"><span className="label">Data terbaru</span><span className="dot" style={{ background: fresh ? 'var(--ok)' : 'var(--waspada)' }} /><span className="mono">{ago(data?.latestData, now)}</span></span>
       <span className="sep" />
