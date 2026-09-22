@@ -16,6 +16,9 @@ import { startProbeBridge } from './probe.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const MQTT_PORT = Number(process.env.MQTT_PORT ?? 1883);
+// Alamat bind broker. Bawaannya semua antarmuka seperti sebelumnya; di server bersama
+// yang tanpa firewall host, setel 127.0.0.1 supaya broker tidak ikut terbuka ke publik.
+const MQTT_HOST = process.env.MQTT_HOST ?? '0.0.0.0';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dbDesc = `mysql://${process.env.STESYGEO_DB_USER ?? 'root'}@${process.env.STESYGEO_DB_HOST ?? '127.0.0.1'}:${process.env.STESYGEO_DB_PORT ?? 3306}/${process.env.STESYGEO_DB_NAME ?? 'stesygeo'}`;
 
@@ -86,7 +89,15 @@ broker.on('publish', async (packet: any, client: any) => {
     console.error('MQTT payload tidak valid', e);
   }
 });
-createServer(broker.handle).listen(MQTT_PORT, () => console.log(`Broker MQTT di mqtt://localhost:${MQTT_PORT}`));
+// Gagal bind jangan menjatuhkan API: di server bersama port 1883 sering sudah dipakai
+// broker lain, dan tanpa penangan ini event 'error' yang tak tertangani mematikan
+// seluruh proses — REST, SSE, dan jembatan probe ikut mati gara-gara port MQTT.
+createServer(broker.handle)
+  .listen(MQTT_PORT, MQTT_HOST, () => console.log(`Broker MQTT di mqtt://${MQTT_HOST}:${MQTT_PORT}`))
+  .on('error', (e: NodeJS.ErrnoException) => {
+    console.error(`Broker MQTT tidak bisa mendengarkan di ${MQTT_HOST}:${MQTT_PORT}: ${e.message}`);
+    console.error('Ingestion MQTT mati; REST, SSE, dan jembatan probe tetap jalan. Setel MQTT_PORT ke port lain.');
+  });
 
 // ---------------------------------------------------------------- probe inclinometer live
 // Alat vendor menerbitkan ke broker sendiri (topik Logger_<id>), bukan ke broker di atas.

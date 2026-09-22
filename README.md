@@ -23,6 +23,10 @@ npm run simulate
 
 Opsi simulator: `--http` (kirim lewat HTTP push, bukan MQTT), `--every 30`, `--backfill 72`.
 
+Broker MQTT bawaan mendengarkan di `MQTT_PORT` (1883) pada `MQTT_HOST` (semua antarmuka). Di server
+bersama yang port 1883-nya sudah dipakai broker lain, setel keduanya — gagal bind hanya mematikan
+ingestion MQTT, REST/SSE/jembatan probe tetap jalan.
+
 Basis data diambil dari environment: `STESYGEO_DB_HOST` (127.0.0.1), `STESYGEO_DB_PORT` (3306),
 `STESYGEO_DB_USER` (root), `STESYGEO_DB_PASSWORD` (kosong), `STESYGEO_DB_NAME` (stesygeo).
 Skema dibuat otomatis saat pertama tersambung; `npm run seed` mengosongkan lalu mengisi ulang.
